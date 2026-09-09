@@ -137,7 +137,7 @@
   }
 
   /* ---------- route progress ---------- */
-  .route{ margin:1.6rem 0 2.1rem; }
+  .route{ margin:1.6rem 0 1.4rem; }
   .route__track{
     position:relative;
     height:2px;
@@ -163,6 +163,62 @@
     text-align:center;
     font-size:0.8rem;
     color:var(--slate);
+  }
+
+  /* ---------- mode toggle ---------- */
+  .mode-toggle{
+    display:flex;
+    justify-content:center;
+    margin-bottom:1.6rem;
+  }
+  .mode-pill{
+    display:inline-flex;
+    background:rgba(159,176,196,0.07);
+    border:1px solid var(--card-border);
+    border-radius:999px;
+    padding:3px;
+    gap:2px;
+  }
+  .mode-btn{
+    font-family:var(--font-body);
+    font-size:0.8rem;
+    font-weight:600;
+    padding:0.38rem 1.05rem;
+    border-radius:999px;
+    border:none;
+    background:transparent;
+    color:var(--slate);
+    cursor:pointer;
+    transition:background .18s ease, color .18s ease;
+    white-space:nowrap;
+    line-height:1;
+  }
+  .mode-btn.is-active{
+    background:var(--brass);
+    color:var(--navy-deep);
+  }
+  .mode-btn:not(.is-active):not(:disabled):hover{
+    color:var(--parchment);
+    background:rgba(255,255,255,0.06);
+  }
+  .mode-btn:disabled{
+    opacity:0.32;
+    cursor:not-allowed;
+  }
+  .mode-btn .mode-count{
+    display:inline-block;
+    background:rgba(0,0,0,0.18);
+    border-radius:999px;
+    font-size:0.72rem;
+    font-weight:700;
+    padding:0.05em 0.45em;
+    margin-left:0.3em;
+    vertical-align:middle;
+    line-height:1.5;
+  }
+  .mode-btn.is-active .mode-count{
+    background:rgba(0,0,0,0.22);
+    color:var(--navy-deep);
   }
 
   /* ---------- card ---------- */
@@ -207,6 +263,10 @@
     font-style:italic;
     font-size:0.95rem;
     color:var(--slate);
+    transition:color .2s ease;
+  }
+  .card__kicker.kicker--difficult{
+    color:var(--brass);
   }
   .prompt{
     text-align:center;
@@ -288,7 +348,7 @@
   }
   .btn--muted:hover{ color:var(--brick); text-decoration-color:var(--brick); }
 
-  .btn:focus-visible, .answer-input:focus-visible, .reset-btn:focus-visible, summary:focus-visible{
+  .btn:focus-visible, .answer-input:focus-visible, .reset-btn:focus-visible, .mode-btn:focus-visible, summary:focus-visible{
     outline:2px solid var(--brass);
     outline-offset:2px;
   }
@@ -450,11 +510,24 @@
       <div class="route__fill" id="routeFill"></div>
       <div class="route__marker" id="routeMarker"></div>
     </div>
-    <div class="route__label"><span id="exploredCount">0</span> / 217 zbadanych słów</div>
+    <div class="route__label">
+      <span id="allModeLabel"><span id="exploredCount">0</span> / 217 zbadanych słów</span>
+      <span id="difficultModeLabel" hidden>Opanowano: <span id="difficultMasteredEl">0</span> / <span id="difficultTotalEl">0</span> trudnych</span>
+    </div>
+  </div>
+
+  <!-- Mode toggle -->
+  <div class="mode-toggle">
+    <div class="mode-pill" role="group" aria-label="Tryb ćwiczeń">
+      <button type="button" class="mode-btn is-active" id="modeAllBtn">Wszystkie słowa</button>
+      <button type="button" class="mode-btn" id="modeDifficultBtn" disabled>
+        Tylko trudne<span class="mode-count" id="difficultModeCount">0</span>
+      </button>
+    </div>
   </div>
 
   <section class="card" id="card">
-    <p class="card__kicker">Przetłumacz na angielski</p>
+    <p class="card__kicker" id="cardKicker">Przetłumacz na angielski</p>
     <p class="prompt" id="promptWord">…</p>
 
     <form id="answerForm" autocomplete="off" novalidate>
@@ -497,7 +570,7 @@
 (function(){
   "use strict";
 
-  // [english, polish] — faithfully ported from list 2
+  // [english, polish]
   const WORDS = [
     ["ancient","starożytny"],
     ["at the roundabout","na rondzie"],
@@ -720,6 +793,7 @@
 
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  // --- State ---
   let drawCounts = new Array(WORDS.length).fill(0);
   let currentIndex = null;
   let goodCount = 0;
@@ -730,6 +804,11 @@
   let difficultMap = new Map(); // index -> misses
   let appState = 'active'; // 'active' | 'correct' | 'revealed'
   let nextTimer = null;
+
+  // Mode state
+  let quizMode = 'all';              // 'all' | 'difficult'
+  let difficultSessionInitialCount = 0; // size of difficultMap when difficult mode was entered
+  let nextKickerMsg = null;          // one-shot kicker override
 
   const AFFIRMATIONS = [
     "Świetnie!",
@@ -751,16 +830,26 @@
     resetBtn: document.getElementById('resetBtn'),
     resultArea: document.getElementById('resultArea'),
     card: document.getElementById('card'),
+    cardKicker: document.getElementById('cardKicker'),
     goodCount: document.getElementById('goodCount'),
     badCount: document.getElementById('badCount'),
     accuracyValue: document.getElementById('accuracyValue'),
     exploredCount: document.getElementById('exploredCount'),
     routeFill: document.getElementById('routeFill'),
     routeMarker: document.getElementById('routeMarker'),
+    allModeLabel: document.getElementById('allModeLabel'),
+    difficultModeLabel: document.getElementById('difficultModeLabel'),
+    difficultMasteredEl: document.getElementById('difficultMasteredEl'),
+    difficultTotalEl: document.getElementById('difficultTotalEl'),
     difficultCount: document.getElementById('difficultCount'),
     difficultEmpty: document.getElementById('difficultEmpty'),
-    difficultList: document.getElementById('difficultList')
+    difficultList: document.getElementById('difficultList'),
+    modeAllBtn: document.getElementById('modeAllBtn'),
+    modeDifficultBtn: document.getElementById('modeDifficultBtn'),
+    difficultModeCount: document.getElementById('difficultModeCount')
   };
+
+  // --- Utilities ---
 
   function escapeHtml(str){
     return str.replace(/[&<>"']/g, function(c){
@@ -768,7 +857,27 @@
     });
   }
 
+  // --- Pick next word ---
+
   function pickIndex(){
+    if (quizMode === 'difficult'){
+      const pool = Array.from(difficultMap.keys());
+      if (pool.length === 0) return Math.floor(Math.random() * WORDS.length);
+
+      // Avoid immediate repeat when possible
+      const eligible = pool.length > 1 ? pool.filter(i => i !== currentIndex) : pool;
+
+      // Weighted random: more misses → higher probability
+      const total = eligible.reduce((s, i) => s + (difficultMap.get(i) || 1), 0);
+      let r = Math.random() * total;
+      for (const i of eligible){
+        r -= (difficultMap.get(i) || 1);
+        if (r <= 0) return i;
+      }
+      return eligible[eligible.length - 1];
+    }
+
+    // All-words mode: original logic
     let idx, guard = 0;
     do{
       idx = Math.floor(Math.random() * WORDS.length);
@@ -777,6 +886,8 @@
     drawCounts[idx] = (drawCounts[idx] || 0) + 1;
     return idx;
   }
+
+  // --- Hint helpers ---
 
   function buildHintDisplay(word, revealCount){
     let letterSeen = 0;
@@ -812,17 +923,34 @@
     return html;
   }
 
+  // --- UI updates ---
+
   function updateStatsUI(){
     els.goodCount.textContent = goodCount;
     els.badCount.textContent = badCount;
     const total = goodCount + badCount;
     els.accuracyValue.textContent = total === 0 ? '\u2014' : Math.round((goodCount / total) * 100) + '%';
 
-    const explored = exploredSet.size;
-    els.exploredCount.textContent = explored;
-    const pct = (explored / WORDS.length) * 100;
-    els.routeFill.style.width = pct + '%';
-    els.routeMarker.style.left = pct + '%';
+    if (quizMode === 'difficult'){
+      els.allModeLabel.hidden = true;
+      els.difficultModeLabel.hidden = false;
+      const mastered = Math.max(0, difficultSessionInitialCount - difficultMap.size);
+      els.difficultMasteredEl.textContent = mastered;
+      els.difficultTotalEl.textContent = difficultSessionInitialCount;
+      const pct = difficultSessionInitialCount > 0
+        ? (mastered / difficultSessionInitialCount) * 100
+        : 0;
+      els.routeFill.style.width = pct + '%';
+      els.routeMarker.style.left = pct + '%';
+    } else {
+      els.allModeLabel.hidden = false;
+      els.difficultModeLabel.hidden = true;
+      const explored = exploredSet.size;
+      els.exploredCount.textContent = explored;
+      const pct = (explored / WORDS.length) * 100;
+      els.routeFill.style.width = pct + '%';
+      els.routeMarker.style.left = pct + '%';
+    }
   }
 
   function updateDifficultUI(){
@@ -832,31 +960,58 @@
       els.difficultEmpty.hidden = false;
       els.difficultList.hidden = true;
       els.difficultList.innerHTML = '';
-      return;
+    } else {
+      els.difficultEmpty.hidden = true;
+      els.difficultList.hidden = false;
+      const rows = Array.from(difficultMap.entries()).sort((a, b) => b[1] - a[1]);
+      els.difficultList.innerHTML = rows.map(function(entry){
+        const idx = entry[0], misses = entry[1];
+        const w = WORDS[idx];
+        return '<li>' +
+          '<span class="difficult__pl">' + escapeHtml(w[1]) + '</span>' +
+          '<span class="difficult__en">' + escapeHtml(w[0]) +
+            '<span class="difficult__miss">\u00d7' + misses + '</span></span>' +
+        '</li>';
+      }).join('');
     }
-    els.difficultEmpty.hidden = true;
-    els.difficultList.hidden = false;
+    updateModeUI();
+  }
 
-    const rows = Array.from(difficultMap.entries()).sort((a, b) => b[1] - a[1]);
-    els.difficultList.innerHTML = rows.map(function(entry){
-      const idx = entry[0], misses = entry[1];
-      const w = WORDS[idx];
-      return '<li>' +
-        '<span class="difficult__pl">' + escapeHtml(w[1]) + '</span>' +
-        '<span class="difficult__en">' + escapeHtml(w[0]) +
-          '<span class="difficult__miss">\u00d7' + misses + '</span></span>' +
-      '</li>';
-    }).join('');
+  function updateModeUI(){
+    els.modeAllBtn.classList.toggle('is-active', quizMode === 'all');
+    els.modeDifficultBtn.classList.toggle('is-active', quizMode === 'difficult');
+    els.modeDifficultBtn.disabled = (difficultMap.size === 0 && quizMode !== 'difficult');
+    els.difficultModeCount.textContent = difficultMap.size;
   }
 
   function setCardState(cls){
     els.card.classList.remove('is-correct', 'is-wrong');
     if (cls && !reduceMotion){
-      // force reflow so the animation can retrigger
       void els.card.offsetWidth;
       els.card.classList.add(cls);
     }
   }
+
+  function setKicker(text, highlight){
+    els.cardKicker.textContent = text;
+    els.cardKicker.classList.toggle('kicker--difficult', !!highlight);
+  }
+
+  // --- Mode switching ---
+
+  function switchMode(mode){
+    if (mode === quizMode) return;
+    if (mode === 'difficult' && difficultMap.size === 0) return;
+    quizMode = mode;
+    if (mode === 'difficult'){
+      difficultSessionInitialCount = difficultMap.size;
+    }
+    updateModeUI();
+    clearTimeout(nextTimer);
+    loadWord();
+  }
+
+  // --- Core flow ---
 
   function loadWord(){
     clearTimeout(nextTimer);
@@ -864,11 +1019,29 @@
     hasWrongAttempt = false;
     hintRevealCount = 0;
 
+    // If we're in difficult mode but the map is now empty, fall back to all mode
+    if (quizMode === 'difficult' && difficultMap.size === 0){
+      quizMode = 'all';
+      updateModeUI();
+      nextKickerMsg = 'Wszystkie trudne opanowane! 🎉';
+    }
+
     currentIndex = pickIndex();
     exploredSet.add(currentIndex);
     updateStatsUI();
 
     els.promptWord.textContent = WORDS[currentIndex][1];
+
+    if (nextKickerMsg){
+      setKicker(nextKickerMsg, false);
+      nextKickerMsg = null;
+    } else {
+      setKicker(
+        quizMode === 'difficult' ? 'Tryb trudnych słów' : 'Przetłumacz na angielski',
+        quizMode === 'difficult'
+      );
+    }
+
     els.input.value = '';
     els.input.disabled = false;
     els.input.hidden = false;
@@ -886,6 +1059,23 @@
   function markCorrect(){
     appState = 'correct';
     goodCount++;
+
+    // In difficult mode: reduce miss count; remove word when it reaches 0
+    if (quizMode === 'difficult' && difficultMap.has(currentIndex)){
+      const newMisses = (difficultMap.get(currentIndex) || 1) - 1;
+      if (newMisses <= 0){
+        difficultMap.delete(currentIndex);
+      } else {
+        difficultMap.set(currentIndex, newMisses);
+      }
+      updateDifficultUI(); // also calls updateModeUI
+
+      // If difficult map is now empty, schedule switch-back on next loadWord
+      if (difficultMap.size === 0){
+        nextKickerMsg = 'Wszystkie trudne opanowane! 🎉';
+      }
+    }
+
     updateStatsUI();
 
     els.input.disabled = true;
@@ -909,7 +1099,7 @@
 
     const idx = currentIndex;
     difficultMap.set(idx, (difficultMap.get(idx) || 0) + 1);
-    updateDifficultUI();
+    updateDifficultUI(); // also calls updateModeUI
     updateStatsUI();
 
     const correct = WORDS[idx][0];
@@ -968,9 +1158,14 @@
     badCount = 0;
     exploredSet = new Set();
     difficultMap = new Map();
+    quizMode = 'all';
+    difficultSessionInitialCount = 0;
+    nextKickerMsg = null;
     updateDifficultUI();
     loadWord();
   }
+
+  // --- Event listeners ---
 
   els.form.addEventListener('submit', function(e){
     e.preventDefault();
@@ -979,6 +1174,8 @@
   els.hintBtn.addEventListener('click', useHint);
   els.giveUpBtn.addEventListener('click', revealAnswer);
   els.resetBtn.addEventListener('click', resetSession);
+  els.modeAllBtn.addEventListener('click', function(){ switchMode('all'); });
+  els.modeDifficultBtn.addEventListener('click', function(){ switchMode('difficult'); });
 
   window.addEventListener('keydown', function(e){
     if (e.key !== 'Enter') return;
@@ -992,7 +1189,8 @@
     }
   });
 
-  updateDifficultUI();
+  // --- Init ---
+  updateDifficultUI(); // also calls updateModeUI
   loadWord();
 })();
 </script>
