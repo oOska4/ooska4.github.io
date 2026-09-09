@@ -519,7 +519,12 @@
   <!-- Mode toggle -->
   <div class="mode-toggle">
     <div class="mode-pill" role="group" aria-label="Tryb ćwiczeń">
-      <button type="button" class="mode-btn is-active" id="modeAllBtn">Wszystkie słowa</button>
+      <button type="button" class="mode-btn is-active" id="modeAllBtn">
+        Wszystkie słowa
+      </button>
+      <button type="button" class="mode-btn" id="modeNoRepeatBtn">
+        Bez powtórek
+      </button>
       <button type="button" class="mode-btn" id="modeDifficultBtn" disabled>
         Tylko trudne<span class="mode-count" id="difficultModeCount">0</span>
       </button>
@@ -771,14 +776,17 @@
   let hintRevealCount = 0;
   let hasWrongAttempt = false;
   let exploredSet = new Set();
-  let difficultMap = new Map(); // index -> misses
-  let appState = 'active'; // 'active' | 'correct' | 'revealed'
+  let difficultMap = new Map();
+  let appState = 'active';
   let nextTimer = null;
 
   // Mode state
-  let quizMode = 'all';              // 'all' | 'difficult'
-  let difficultSessionInitialCount = 0; // size of difficultMap when difficult mode was entered
-  let nextKickerMsg = null;          // one-shot kicker override
+  let quizMode = 'all';              // 'all' | 'no-repeat' | 'difficult'
+  let difficultSessionInitialCount = 0;
+  let nextKickerMsg = null;
+
+  // Słowa wykorzystane w aktualnym cyklu trybu "Bez powtórek"
+  let noRepeatSet = new Set();
 
   const AFFIRMATIONS = [
     "Świetnie!",
@@ -815,6 +823,7 @@
     difficultEmpty: document.getElementById('difficultEmpty'),
     difficultList: document.getElementById('difficultList'),
     modeAllBtn: document.getElementById('modeAllBtn'),
+    modeNoRepeatBtn: document.getElementById('modeNoRepeatBtn'),
     modeDifficultBtn: document.getElementById('modeDifficultBtn'),
     difficultModeCount: document.getElementById('difficultModeCount')
   };
@@ -830,30 +839,101 @@
   // --- Pick next word ---
 
   function pickIndex(){
+
+    // =========================
+    // TRYB: TYLKO TRUDNE
+    // =========================
     if (quizMode === 'difficult'){
       const pool = Array.from(difficultMap.keys());
-      if (pool.length === 0) return Math.floor(Math.random() * WORDS.length);
 
-      // Avoid immediate repeat when possible
-      const eligible = pool.length > 1 ? pool.filter(i => i !== currentIndex) : pool;
+      if (pool.length === 0){
+        return Math.floor(Math.random() * WORDS.length);
+      }
 
-      // Weighted random: more misses → higher probability
-      const total = eligible.reduce((s, i) => s + (difficultMap.get(i) || 1), 0);
+      // Unikaj natychmiastowego powtórzenia, jeśli jest wybór
+      const eligible =
+        pool.length > 1
+          ? pool.filter(i => i !== currentIndex)
+          : pool;
+
+      // Więcej błędów = większa szansa pojawienia się słowa
+      const total = eligible.reduce(
+        (s, i) => s + (difficultMap.get(i) || 1),
+        0
+      );
+
       let r = Math.random() * total;
+
       for (const i of eligible){
         r -= (difficultMap.get(i) || 1);
-        if (r <= 0) return i;
+
+        if (r <= 0){
+          return i;
+        }
       }
+
       return eligible[eligible.length - 1];
     }
 
-    // All-words mode: original logic
-    let idx, guard = 0;
+
+    // =========================
+    // TRYB: BEZ POWTÓREK
+    // =========================
+    if (quizMode === 'no-repeat'){
+
+      // Jeżeli wszystkie słowa zostały już przerobione,
+      // rozpoczynamy nowy cykl.
+      if (noRepeatSet.size >= WORDS.length){
+        noRepeatSet.clear();
+      }
+
+      // Wszystkie jeszcze niewykorzystane słowa
+      let available = [];
+
+      for (let i = 0; i < WORDS.length; i++){
+        if (!noRepeatSet.has(i)){
+          available.push(i);
+        }
+      }
+
+      // Dodatkowe zabezpieczenie przed natychmiastowym powtórzeniem
+      if (available.length > 1 && currentIndex !== null){
+        const filtered = available.filter(i => i !== currentIndex);
+
+        if (filtered.length > 0){
+          available = filtered;
+        }
+      }
+
+      // Losowanie
+      const idx = available[
+        Math.floor(Math.random() * available.length)
+      ];
+
+      // Oznacz słowo jako wykorzystane w tym cyklu
+      noRepeatSet.add(idx);
+
+      return idx;
+    }
+
+
+    // =========================
+    // TRYB: WSZYSTKIE SŁOWA
+    // =========================
+
+    let idx;
+    let guard = 0;
+
     do{
       idx = Math.floor(Math.random() * WORDS.length);
       guard++;
-    } while ((drawCounts[idx] > 3 || idx === currentIndex) && guard < 300);
+    } while (
+      (drawCounts[idx] > 3 || idx === currentIndex) &&
+      guard < 300
+    );
+
     drawCounts[idx] = (drawCounts[idx] || 0) + 1;
+
     return idx;
   }
 
@@ -875,7 +955,9 @@
 
   function countLetters(word){
     let n = 0;
-    for (const ch of word){ if (/[a-zA-Z]/.test(ch)) n++; }
+    for (const ch of word){
+      if (/[a-zA-Z]/.test(ch)) n++;
+    }
     return n;
   }
 
@@ -883,13 +965,23 @@
     if (!userAnswer){
       return '<span class="diff-empty">(brak odpowiedzi)</span>';
     }
+
     let html = '';
+
     for (let i = 0; i < userAnswer.length; i++){
       const uch = userAnswer[i];
       const cch = correct[i];
-      const match = cch !== undefined && uch.toLowerCase() === cch.toLowerCase();
-      html += '<span class="' + (match ? 'diff-ok' : 'diff-bad') + '">' + escapeHtml(uch) + '</span>';
+      const match =
+        cch !== undefined &&
+        uch.toLowerCase() === cch.toLowerCase();
+
+      html += '<span class="' +
+        (match ? 'diff-ok' : 'diff-bad') +
+        '">' +
+        escapeHtml(uch) +
+        '</span>';
     }
+
     return html;
   }
 
@@ -898,26 +990,47 @@
   function updateStatsUI(){
     els.goodCount.textContent = goodCount;
     els.badCount.textContent = badCount;
+
     const total = goodCount + badCount;
-    els.accuracyValue.textContent = total === 0 ? '\u2014' : Math.round((goodCount / total) * 100) + '%';
+
+    els.accuracyValue.textContent =
+      total === 0
+        ? '\u2014'
+        : Math.round((goodCount / total) * 100) + '%';
 
     if (quizMode === 'difficult'){
       els.allModeLabel.hidden = true;
       els.difficultModeLabel.hidden = false;
-      const mastered = Math.max(0, difficultSessionInitialCount - difficultMap.size);
+
+      const mastered =
+        Math.max(
+          0,
+          difficultSessionInitialCount - difficultMap.size
+        );
+
       els.difficultMasteredEl.textContent = mastered;
-      els.difficultTotalEl.textContent = difficultSessionInitialCount;
-      const pct = difficultSessionInitialCount > 0
-        ? (mastered / difficultSessionInitialCount) * 100
-        : 0;
+      els.difficultTotalEl.textContent =
+        difficultSessionInitialCount;
+
+      const pct =
+        difficultSessionInitialCount > 0
+          ? (mastered / difficultSessionInitialCount) * 100
+          : 0;
+
       els.routeFill.style.width = pct + '%';
       els.routeMarker.style.left = pct + '%';
+
     } else {
       els.allModeLabel.hidden = false;
       els.difficultModeLabel.hidden = true;
+
       const explored = exploredSet.size;
+
       els.exploredCount.textContent = explored;
-      const pct = (explored / WORDS.length) * 100;
+
+      const pct =
+        (explored / WORDS.length) * 100;
+
       els.routeFill.style.width = pct + '%';
       els.routeMarker.style.left = pct + '%';
     }
@@ -925,37 +1038,76 @@
 
   function updateDifficultUI(){
     const count = difficultMap.size;
+
     els.difficultCount.textContent = count;
+
     if (count === 0){
       els.difficultEmpty.hidden = false;
       els.difficultList.hidden = true;
       els.difficultList.innerHTML = '';
+
     } else {
       els.difficultEmpty.hidden = true;
       els.difficultList.hidden = false;
-      const rows = Array.from(difficultMap.entries()).sort((a, b) => b[1] - a[1]);
-      els.difficultList.innerHTML = rows.map(function(entry){
-        const idx = entry[0], misses = entry[1];
-        const w = WORDS[idx];
-        return '<li>' +
-          '<span class="difficult__pl">' + escapeHtml(w[1]) + '</span>' +
-          '<span class="difficult__en">' + escapeHtml(w[0]) +
-            '<span class="difficult__miss">\u00d7' + misses + '</span></span>' +
-        '</li>';
-      }).join('');
+
+      const rows =
+        Array.from(difficultMap.entries())
+          .sort((a, b) => b[1] - a[1]);
+
+      els.difficultList.innerHTML =
+        rows.map(function(entry){
+          const idx = entry[0];
+          const misses = entry[1];
+          const w = WORDS[idx];
+
+          return '<li>' +
+            '<span class="difficult__pl">' +
+              escapeHtml(w[1]) +
+            '</span>' +
+            '<span class="difficult__en">' +
+              escapeHtml(w[0]) +
+              '<span class="difficult__miss">\u00d7' +
+                misses +
+              '</span>' +
+            '</span>' +
+          '</li>';
+        }).join('');
     }
+
     updateModeUI();
   }
 
   function updateModeUI(){
-    els.modeAllBtn.classList.toggle('is-active', quizMode === 'all');
-    els.modeDifficultBtn.classList.toggle('is-active', quizMode === 'difficult');
-    els.modeDifficultBtn.disabled = (difficultMap.size === 0 && quizMode !== 'difficult');
-    els.difficultModeCount.textContent = difficultMap.size;
+
+    els.modeAllBtn.classList.toggle(
+      'is-active',
+      quizMode === 'all'
+    );
+
+    els.modeNoRepeatBtn.classList.toggle(
+      'is-active',
+      quizMode === 'no-repeat'
+    );
+
+    els.modeDifficultBtn.classList.toggle(
+      'is-active',
+      quizMode === 'difficult'
+    );
+
+    els.modeDifficultBtn.disabled =
+      difficultMap.size === 0 &&
+      quizMode !== 'difficult';
+
+    els.difficultModeCount.textContent =
+      difficultMap.size;
   }
 
   function setCardState(cls){
-    els.card.classList.remove('is-correct', 'is-wrong');
+    els.card.classList.remove(
+      'is-correct',
+      'is-wrong'
+    );
+
     if (cls && !reduceMotion){
       void els.card.offsetWidth;
       els.card.classList.add(cls);
@@ -964,20 +1116,41 @@
 
   function setKicker(text, highlight){
     els.cardKicker.textContent = text;
-    els.cardKicker.classList.toggle('kicker--difficult', !!highlight);
+    els.cardKicker.classList.toggle(
+      'kicker--difficult',
+      !!highlight
+    );
   }
 
   // --- Mode switching ---
 
   function switchMode(mode){
+
     if (mode === quizMode) return;
-    if (mode === 'difficult' && difficultMap.size === 0) return;
-    quizMode = mode;
-    if (mode === 'difficult'){
-      difficultSessionInitialCount = difficultMap.size;
+
+    if (
+      mode === 'difficult' &&
+      difficultMap.size === 0
+    ){
+      return;
     }
+
+    quizMode = mode;
+
+    if (mode === 'difficult'){
+      difficultSessionInitialCount =
+        difficultMap.size;
+    }
+
+    if (mode === 'no-repeat'){
+      // Rozpocznij nowy cykl od momentu włączenia trybu
+      noRepeatSet.clear();
+    }
+
     updateModeUI();
+
     clearTimeout(nextTimer);
+
     loadWord();
   }
 
@@ -985,64 +1158,107 @@
 
   function loadWord(){
     clearTimeout(nextTimer);
+
     appState = 'active';
     hasWrongAttempt = false;
     hintRevealCount = 0;
 
     // If we're in difficult mode but the map is now empty, fall back to all mode
-    if (quizMode === 'difficult' && difficultMap.size === 0){
+    if (
+      quizMode === 'difficult' &&
+      difficultMap.size === 0
+    ){
       quizMode = 'all';
       updateModeUI();
       nextKickerMsg = 'Wszystkie trudne opanowane! 🎉';
     }
 
     currentIndex = pickIndex();
+
     exploredSet.add(currentIndex);
+
     updateStatsUI();
 
-    els.promptWord.textContent = WORDS[currentIndex][1];
+    els.promptWord.textContent =
+      WORDS[currentIndex][1];
 
     if (nextKickerMsg){
-      setKicker(nextKickerMsg, false);
-      nextKickerMsg = null;
-    } else {
+
       setKicker(
-        quizMode === 'difficult' ? 'Tryb trudnych słów' : 'Przetłumacz na angielski',
-        quizMode === 'difficult'
+        nextKickerMsg,
+        false
+      );
+
+      nextKickerMsg = null;
+
+    } else {
+
+      let kickerText =
+        'Przetłumacz na angielski';
+
+      let highlight = false;
+
+      if (quizMode === 'difficult'){
+        kickerText = 'Tryb trudnych słów';
+        highlight = true;
+      }
+
+      if (quizMode === 'no-repeat'){
+        kickerText = 'Bez powtórek';
+      }
+
+      setKicker(
+        kickerText,
+        highlight
       );
     }
 
     els.input.value = '';
     els.input.disabled = false;
     els.input.hidden = false;
+
     els.hintDisplay.hidden = true;
     els.warnMsg.hidden = true;
+
     els.actionsRow.hidden = false;
+
     els.hintBtn.disabled = false;
+
     els.resultArea.hidden = true;
     els.resultArea.innerHTML = '';
 
     setCardState(null);
+
     els.input.focus();
   }
 
   function markCorrect(){
+
     appState = 'correct';
     goodCount++;
 
     // In difficult mode: reduce miss count; remove word when it reaches 0
-    if (quizMode === 'difficult' && difficultMap.has(currentIndex)){
-      const newMisses = (difficultMap.get(currentIndex) || 1) - 1;
+    if (
+      quizMode === 'difficult' &&
+      difficultMap.has(currentIndex)
+    ){
+      const newMisses =
+        (difficultMap.get(currentIndex) || 1) - 1;
+
       if (newMisses <= 0){
         difficultMap.delete(currentIndex);
       } else {
-        difficultMap.set(currentIndex, newMisses);
+        difficultMap.set(
+          currentIndex,
+          newMisses
+        );
       }
-      updateDifficultUI(); // also calls updateModeUI
 
-      // If difficult map is now empty, schedule switch-back on next loadWord
+      updateDifficultUI();
+
       if (difficultMap.size === 0){
-        nextKickerMsg = 'Wszystkie trudne opanowane! 🎉';
+        nextKickerMsg =
+          'Wszystkie trudne opanowane! 🎉';
       }
     }
 
@@ -1053,27 +1269,49 @@
     els.hintDisplay.hidden = true;
     els.warnMsg.hidden = true;
 
-    const msg = AFFIRMATIONS[Math.floor(Math.random() * AFFIRMATIONS.length)];
+    const msg =
+      AFFIRMATIONS[
+        Math.floor(
+          Math.random() * AFFIRMATIONS.length
+        )
+      ];
+
     els.resultArea.hidden = false;
+
     els.resultArea.innerHTML =
-      '<p class="result__ok">' + escapeHtml(msg) + '</p>' +
-      '<p class="result__continue">Enter, aby przejść dalej</p>';
+      '<p class="result__ok">' +
+        escapeHtml(msg) +
+      '</p>' +
+      '<p class="result__continue">' +
+        'Enter, aby przejść dalej' +
+      '</p>';
 
     setCardState('is-correct');
-    nextTimer = setTimeout(loadWord, 900);
+
+    nextTimer =
+      setTimeout(loadWord, 900);
   }
 
   function revealAnswer(){
+
     appState = 'revealed';
     badCount++;
 
     const idx = currentIndex;
-    difficultMap.set(idx, (difficultMap.get(idx) || 0) + 1);
-    updateDifficultUI(); // also calls updateModeUI
+
+    difficultMap.set(
+      idx,
+      (difficultMap.get(idx) || 0) + 1
+    );
+
+    updateDifficultUI();
     updateStatsUI();
 
-    const correct = WORDS[idx][0];
-    const userAnswer = els.input.value.trim();
+    const correct =
+      WORDS[idx][0];
+
+    const userAnswer =
+      els.input.value.trim();
 
     els.input.disabled = true;
     els.actionsRow.hidden = true;
@@ -1081,87 +1319,191 @@
     els.warnMsg.hidden = true;
 
     els.resultArea.hidden = false;
-    els.resultArea.innerHTML =
-      '<p class="result__label">Twoja odpowiedź</p>' +
-      '<p class="diff">' + buildDiffHtml(userAnswer, correct) + '</p>' +
-      '<p class="result__label">Poprawna odpowiedź</p>' +
-      '<p class="correct-word">' + escapeHtml(correct) + '</p>' +
-      '<button type="button" class="btn btn--primary" id="nextBtn">Dalej</button>';
 
-    document.getElementById('nextBtn').addEventListener('click', loadWord);
+    els.resultArea.innerHTML =
+      '<p class="result__label">' +
+        'Twoja odpowiedź' +
+      '</p>' +
+      '<p class="diff">' +
+        buildDiffHtml(
+          userAnswer,
+          correct
+        ) +
+      '</p>' +
+      '<p class="result__label">' +
+        'Poprawna odpowiedź' +
+      '</p>' +
+      '<p class="correct-word">' +
+        escapeHtml(correct) +
+      '</p>' +
+      '<button type="button" class="btn btn--primary" id="nextBtn">' +
+        'Dalej' +
+      '</button>';
+
+    document
+      .getElementById('nextBtn')
+      .addEventListener(
+        'click',
+        loadWord
+      );
   }
 
   function checkAnswer(){
+
     if (appState !== 'active') return;
-    const answer = els.input.value.trim().toLowerCase();
-    const correct = WORDS[currentIndex][0];
+
+    const answer =
+      els.input.value
+        .trim()
+        .toLowerCase();
+
+    const correct =
+      WORDS[currentIndex][0];
 
     if (answer === correct){
       markCorrect();
+
     } else {
+
       hasWrongAttempt = true;
+
       els.warnMsg.hidden = false;
+
       setCardState('is-wrong');
+
       els.input.focus();
       els.input.select();
     }
   }
 
   function useHint(){
+
     if (appState !== 'active') return;
-    const word = WORDS[currentIndex][0];
-    const total = countLetters(word);
+
+    const word =
+      WORDS[currentIndex][0];
+
+    const total =
+      countLetters(word);
+
     if (hintRevealCount >= total) return;
+
     hintRevealCount++;
+
     els.hintDisplay.hidden = false;
-    els.hintDisplay.textContent = buildHintDisplay(word, hintRevealCount);
+
+    els.hintDisplay.textContent =
+      buildHintDisplay(
+        word,
+        hintRevealCount
+      );
+
     if (hintRevealCount >= total){
       els.hintBtn.disabled = true;
     }
   }
 
   function resetSession(){
+
     clearTimeout(nextTimer);
-    drawCounts = new Array(WORDS.length).fill(0);
+
+    drawCounts =
+      new Array(WORDS.length).fill(0);
+
     currentIndex = null;
     goodCount = 0;
     badCount = 0;
+
     exploredSet = new Set();
     difficultMap = new Map();
+
     quizMode = 'all';
+
     difficultSessionInitialCount = 0;
+
+    noRepeatSet = new Set();
+
     nextKickerMsg = null;
+
     updateDifficultUI();
+
     loadWord();
   }
 
   // --- Event listeners ---
 
-  els.form.addEventListener('submit', function(e){
-    e.preventDefault();
-    checkAnswer();
-  });
-  els.hintBtn.addEventListener('click', useHint);
-  els.giveUpBtn.addEventListener('click', revealAnswer);
-  els.resetBtn.addEventListener('click', resetSession);
-  els.modeAllBtn.addEventListener('click', function(){ switchMode('all'); });
-  els.modeDifficultBtn.addEventListener('click', function(){ switchMode('difficult'); });
-
-  window.addEventListener('keydown', function(e){
-    if (e.key !== 'Enter') return;
-    if (appState === 'correct'){
+  els.form.addEventListener(
+    'submit',
+    function(e){
       e.preventDefault();
-      clearTimeout(nextTimer);
-      loadWord();
-    } else if (appState === 'revealed'){
-      e.preventDefault();
-      loadWord();
+      checkAnswer();
     }
-  });
+  );
+
+  els.hintBtn.addEventListener(
+    'click',
+    useHint
+  );
+
+  els.giveUpBtn.addEventListener(
+    'click',
+    revealAnswer
+  );
+
+  els.resetBtn.addEventListener(
+    'click',
+    resetSession
+  );
+
+  els.modeAllBtn.addEventListener(
+    'click',
+    function(){
+      switchMode('all');
+    }
+  );
+
+  els.modeNoRepeatBtn.addEventListener(
+    'click',
+    function(){
+      switchMode('no-repeat');
+    }
+  );
+
+  els.modeDifficultBtn.addEventListener(
+    'click',
+    function(){
+      switchMode('difficult');
+    }
+  );
+
+  window.addEventListener(
+    'keydown',
+    function(e){
+
+      if (e.key !== 'Enter') return;
+
+      if (appState === 'correct'){
+
+        e.preventDefault();
+
+        clearTimeout(nextTimer);
+
+        loadWord();
+
+      } else if (appState === 'revealed'){
+
+        e.preventDefault();
+
+        loadWord();
+      }
+    }
+  );
 
   // --- Init ---
-  updateDifficultUI(); // also calls updateModeUI
+
+  updateDifficultUI();
   loadWord();
+
 })();
 </script>
 
